@@ -149,6 +149,17 @@ GROUP_SYNONYMS = {
     "australien": ["AUSTRALIA_ASX"], "australia": ["AUSTRALIA_ASX"], "israel": ["ISRAEL_TECH_DEFENSE"],
     "quanten": ["SPECULATIVE_AI_QUANTUM"], "quantum": ["SPECULATIVE_AI_QUANTUM"],
     "sp500": [g for g in TICKER_LISTS if g.startswith("SP500")],
+    "casino": ["CASINOS_GAMING"], "casinos": ["CASINOS_GAMING"], "gambling": ["CASINOS_GAMING"],
+    "gluecksspiel": ["CASINOS_GAMING"], "glucksspiel": ["CASINOS_GAMING"], "gaming": ["CASINOS_GAMING"],
+    "macau": ["CASINOS_GAMING"], "macao": ["CASINOS_GAMING"], "vegas": ["CASINOS_GAMING"],
+    "hotel": ["HOTELS_LODGING"], "hotels": ["HOTELS_LODGING"], "lodging": ["HOTELS_LODGING"],
+    "kreuzfahrt": ["CRUISE_LINES"], "kreuzfahrten": ["CRUISE_LINES"], "cruise": ["CRUISE_LINES"],
+    "cruises": ["CRUISE_LINES"],
+    "leasing": ["LEASING_TRANSPORT_EQUIPMENT"], "flugzeugleasing": ["LEASING_TRANSPORT_EQUIPMENT"],
+    "aircraft": ["LEASING_TRANSPORT_EQUIPMENT"], "vermietung": ["LEASING_TRANSPORT_EQUIPMENT"],
+    "schifffahrt": ["SHIPPING_TANKERS_BULK"], "schiffahrt": ["SHIPPING_TANKERS_BULK"],
+    "shipping": ["SHIPPING_TANKERS_BULK"], "tanker": ["SHIPPING_TANKERS_BULK"], "reederei": ["SHIPPING_TANKERS_BULK"],
+    "reedereien": ["SHIPPING_TANKERS_BULK"], "schiffe": ["SHIPPING_TANKERS_BULK"],
 }
 
 

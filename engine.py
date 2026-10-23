@@ -23,7 +23,7 @@ from database import get_currency, get_focus
 
 log = logging.getLogger(__name__)
 
-APP_URL = "https://stockupdate-65qjxum6gq2gpjpr5exqfd.streamlit.app"
+APP_URL = "https://analystv2x1.streamlit.app/"
 
 # ── Konfiguration ────────────────────────────────────────────────────────────
 HISTORY_PERIOD        = "3y"   # 70/200-Indikatoren brauchen Einlaufzeit; 2y waren zu knapp

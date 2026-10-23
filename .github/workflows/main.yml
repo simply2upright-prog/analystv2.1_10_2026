@@ -1,0 +1,38 @@
+name: Daily Scan
+on:
+  schedule:
+    - cron: '45 17 * * 1-5'   # Europa + Asien: nach Xetra/Euronext/LSE-Schluss (19:45 CEST / 18:45 CET)
+    - cron: '30 21 * * 1-5'   # USA: nach NYSE/Nasdaq-Schluss (23:30 CEST / 22:30 CET)
+  workflow_dispatch:
+    inputs:
+      region:
+        description: 'Markt'
+        type: choice
+        options: [eu_asia, us]
+        default: eu_asia
+      force:
+        description: 'Mail auch senden, wenn heute keine neue Kerze (Feiertag/Wochenende)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: daily-scan
+  cancel-in-progress: false
+
+jobs:
+  run-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run
+        env:
+          DAILY_EMAIL_PASS: ${{ secrets.DAILY_EMAIL_PASS }}
+          SCAN_REGION: ${{ github.event_name == 'workflow_dispatch' && inputs.region || (github.event.schedule == '45 17 * * 1-5' && 'eu_asia' || 'us') }}
+          SCAN_FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force || 'false' }}
+        run: python automation_script.py

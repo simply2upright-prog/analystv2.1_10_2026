@@ -17,6 +17,8 @@ from detail_engine import get_detail_analysis, scan_detail_batch, compute_hit_ra
 from engine import MIN_HISTORY_N, FORWARD_DAYS
 from ticker_search import search_ticker, label_to_ticker, get_display_name, get_exchange, get_sector
 from automation_script import add_relative_strength
+from volume_profile import compute_profile, describe_profile, build_profile_figure
+from options_data import get_options_summary, describe_options
 
 APP_URL = "https://stockupdate-65qjxum6gq2gpjpr5exqfd.streamlit.app"
 
@@ -45,6 +47,12 @@ if "det_ticker" not in st.session_state: st.session_state.det_ticker = deep_link
 default_tab = 1 if deep_link_ticker else 0  # 0-indexed
 
 # ─── HELPER: Ampel-Badge ──────────────────────────────────────────────────────
+@st.cache_data(ttl=900, show_spinner=False)
+def _cached_options(ticker: str, price: float) -> dict:
+    """Optionskette 15 Minuten zwischenspeichern (Yahoo-Abruf dauert 1-3 s und ist rate-limitiert)."""
+    return get_options_summary(ticker, price)
+
+
 def _sig_badge(sig: dict) -> str:
     return (f"<span style='background:{sig['color']};color:#fff;padding:3px 10px;"
             f"border-radius:12px;font-size:12px;font-weight:700'>{sig['emoji']} {sig['label']}</span>")
@@ -639,6 +647,49 @@ with tab2:
 
             st.plotly_chart(fig, use_container_width=True)
 
+            # ── Volumen-Zonen: wo wurde zu welchem Kurs gehandelt? ───────────────
+            st.divider()
+            st.markdown("#### 📊 Volumen-Zonen — wo wurde viel gehandelt?")
+            vp_opts = {"6 Monate": 126, "1 Jahr": 252, "2 Jahre": 504}
+            vp_sel = st.radio("Betrachtungszeitraum:", list(vp_opts.keys()), index=1, horizontal=True, key="vp_lookback")
+            prof = compute_profile(df_full, lookback=vp_opts[vp_sel])
+            if prof:
+                st.plotly_chart(build_profile_figure(df_full, prof, cur), use_container_width=True, key="vp_chart")
+                for _line in describe_profile(prof, float(data["Preis"]), cur):
+                    st.markdown(f"- {_line}")
+                st.caption("Blau = Wertbereich (70 % des Umsatzes im Zeitraum), grün = POC, gestrichelte graue Linien = Volumen-Zonen (HVN). "
+                           "Das Volumen jedes Tages wird gleichmäßig über seine Tagesspanne verteilt. Ob Kurse an solchen Zonen häufiger halten, "
+                           "ist für diese Strategie nicht backgetestet — Orientierung, kein Signal. SMA/EMA/Bollinger über die Legende ein- und ausblendbar.")
+            else:
+                st.info("Zu wenig Kurs-/Volumendaten für ein Volumenprofil (mind. 30 Handelstage mit Umsatz).")
+
+            # ── Optionsmarkt: Put/Call-Ratio ──────────────────────────────────────
+            st.divider()
+            st.markdown("#### 🧮 Optionsmarkt — Put/Call-Ratio")
+            with st.spinner("Lade Optionskette …"):
+                opt = _cached_options(sel_t, float(data["Preis"]))
+            if opt.get("available"):
+                o1, o2, o3, o4, o5 = st.columns(5)
+                o1.metric("Put/Call (OI)", "–" if opt["pc_oi"] is None else f"{opt['pc_oi']:.2f}",
+                          help="Offene Puts geteilt durch offene Calls (nahe Verfälle). >1 = mehr Puts, <1 = mehr Calls.")
+                o2.metric("Put/Call (Volumen)", "–" if opt["pc_vol"] is None else f"{opt['pc_vol']:.2f}",
+                          help="Heutiges Handelsvolumen. Außerhalb der Börsenzeit oft leer.")
+                o3.metric("ATM-Vola (nah)", "–" if not opt["atm_iv_near"] else f"{opt['atm_iv_near']*100:.0f} %")
+                o4.metric("Erwartete Spanne", "–" if not opt["exp_move_pct"] else f"±{opt['exp_move_pct']:.1f} %",
+                          help=f"Aus der impliziten Volatilität bis zum nächsten Verfall ({opt['dte_near']} Tage).")
+                o5.metric("Max Pain", "–" if not opt["max_pain"] else f"{opt['max_pain']['strike']:.2f}",
+                          help="Strike, bei dem Optionskäufer des nächsten Verfalls insgesamt am wenigsten erhalten.")
+                st.dataframe(pd.DataFrame([{
+                    "Verfall": r["expiry"], "Tage": r["dte"],
+                    "Put/Call OI": None if r["pc_oi"] is None else round(r["pc_oi"], 2),
+                    "Put/Call Vol.": None if r["pc_vol"] is None else round(r["pc_vol"], 2),
+                    "OI Calls": int(r["calls_oi"]), "OI Puts": int(r["puts_oi"]),
+                    "ATM-Vola": None if not r["atm_iv"] else f"{r['atm_iv']*100:.0f} %",
+                    "Max Pain": r["max_pain"],
+                } for r in opt["expiries"]]), hide_index=True, use_container_width=True)
+            for _line in describe_options(opt):
+                st.markdown(f"- {_line}")
+
             # ── Trefferquoten-Analyse — Kauf (Boden) und Verkauf (Top) getrennt ──
             st.divider()
             t_buy, t_sell = st.tabs([f"🟢 Kauf · {len(entry_sigs)} Signale",
@@ -884,29 +935,6 @@ with tab3:
                             pct = round((v-price_now)/price_now*100,1) if price_now else 0
                             cols_z[j].metric(k.replace("_"," "), f"{v:.2f} {cur}", f"{pct:+.1f}%")
 
-                # POC Chart
-                st.divider()
-                st.subheader("📊 Volume Profile (POC)")
-                df_vp = data["df"].tail(252)
-                counts, edges = np.histogram(df_vp["Close"], bins=50)
-                centers  = (edges[:-1]+edges[1:])/2
-                poc_price = centers[np.argmax(counts)]
-                fig_vp = go.Figure()
-                fig_vp.add_trace(go.Bar(y=centers, x=counts, orientation="h",
-                    marker=dict(color=counts, colorscale="Blues", showscale=False)))
-                fig_vp.add_hline(y=poc_price, line_dash="solid", line_color="#22c55e", line_width=4,
-                    annotation_text=f" 🎯 POC {poc_price:.2f} {cur} ",
-                    annotation_font=dict(color="white",size=16,family="Arial Black"),
-                    annotation_bgcolor="#22c55e", annotation_position="bottom left")
-                fig_vp.add_hline(y=data["Preis"], line_dash="dash", line_color="#facc15", line_width=4,
-                    annotation_text=f" 💵 {data['Preis']} {cur} ",
-                    annotation_font=dict(color="black",size=16,family="Arial Black"),
-                    annotation_bgcolor="#facc15", annotation_position="top right")
-                fig_vp.update_layout(template="plotly_dark",height=600,
-                    paper_bgcolor="#0e1117",plot_bgcolor="#161b22",
-                    xaxis=dict(title="Handelsintensität",showgrid=False),
-                    yaxis=dict(title=f"Preis ({cur})",showgrid=True,gridcolor="#2d333b"))
-                st.plotly_chart(fig_vp, use_container_width=True)
 
     # ── NEU: Trend-Vergleichsauswertung ─────────────────────────────
     # Beantwortet: "Hätte der Trendfilter (Kurs vs. SMA200) historisch

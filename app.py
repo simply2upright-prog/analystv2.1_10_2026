@@ -19,6 +19,7 @@ from ticker_search import search_ticker, label_to_ticker, get_display_name, get_
 from automation_script import add_relative_strength
 from volume_profile import compute_profile, describe_profile, build_profile_figure
 from options_data import get_options_summary, describe_options
+from elder_view import compute_elder, trade_table, build_elder_figure
 
 APP_URL = "https://stockupdate-65qjxum6gq2gpjpr5exqfd.streamlit.app"
 
@@ -689,6 +690,58 @@ with tab2:
                 } for r in opt["expiries"]]), hide_index=True, use_container_width=True)
             for _line in describe_options(opt):
                 st.markdown(f"- {_line}")
+
+            # ── Elder: Was würde er sagen? (Triple Screen, Impuls, Kanal, Stopp, 2 %-Regel) ──
+            st.divider()
+            st.markdown("#### 🎓 Was würde Elder sagen?")
+            st.caption("Regelbasierte Einordnung nach Alexander Elder („Alles, was Sie über Trading wissen müssen“): Wochen-Gezeiten → Tages-Rücksetzer → Einstieg, "
+                       "dazu Kanal, Divergenzen, Volumen sowie Stopp und Positionsgröße. Das ist eine Checkliste aus seinen Regeln, keine Prognose – er selbst nennt das "
+                       "Impuls-System ein Zensursystem (sagt, was man NICHT tun darf). Unser Backtest (984 Titel, 10 Jahre) fand für die reinen Kaufregeln keinen "
+                       "Überschuss gegenüber Zufall; der Nutzen liegt in Filter und Risikoplanung.")
+            try:
+                elder = compute_elder(df_full)
+            except Exception as _e:        # nie die ganze Seite wegen einer Zusatzanalyse abbrechen
+                elder = None
+                st.warning(f"Elder-Analyse nicht möglich: {_e}")
+            if elder:
+                _v = elder["verdict"]
+                _ico = {"green": "🟢", "yellow": "🟡", "red": "🔴"}[_v["ampel"]]
+                st.markdown(f"##### {_ico} {_v['titel']}")
+                st.write(_v["text"])
+                _ST = {"ok": "✅", "warn": "⚠️", "bad": "⛔", "info": "ℹ️"}
+                for _r in elder["rows"]:
+                    st.markdown(f"{_ST[_r['status']]} **{_r['titel']}** — {_r['text']}  \n<span style='color:#94a3b8;font-size:0.8em'>Elder, {_r['ref']}</span>",
+                                unsafe_allow_html=True)
+                _ec1, _ec2 = st.tabs(["Tageschart (Screen 2/3)", "Wochenchart (Screen 1)"])
+                with _ec1:
+                    st.plotly_chart(build_elder_figure(elder, weekly=False), use_container_width=True, key="elder_chart_d")
+                with _ec2:
+                    st.plotly_chart(build_elder_figure(elder, weekly=True), use_container_width=True, key="elder_chart_w")
+                st.caption("Balkenfarbe = Impuls-System (grün: EMA 13 und MACD-Histogramm 12/26/9 steigen, rot: beide fallen, blau: gemischt). "
+                           "Fläche = Value Zone (EMA 13/26), gepunktet = Kanal (95 % der letzten 100 Balken). Unten: Histogramm und Force Index. "
+                           "Hinweis: Das MACD-Histogramm hier ist Elders 12/26/9, nicht das 70/200/9 der Scanner-Signale.")
+                _pl = elder["plan"]
+                if _pl:
+                    st.markdown(f"**Handelsplan ({'Long' if _pl['side'] == 'long' else 'Short'}) — Einstieg, Stopp, Ziel, Größe**")
+                    _p1, _p2 = st.columns(2)
+                    _eq = _p1.number_input("Depotgröße (nur Trading-Kapital)", min_value=1000.0, value=float(st.session_state.get("elder_equity", 50000.0)),
+                                           step=5000.0, key="elder_equity")
+                    _rk = _p2.slider("Risiko je Trade in % des Depots (Elder-Maximum 2 %)", 0.25, 2.0, 1.0, 0.25, key="elder_risk")
+                    _tt = trade_table(_pl, float(_eq), float(_rk))
+                    if _tt.empty:
+                        st.info("Mit diesen Einstiegen/Stopps ist kein sinnvoller Plan berechenbar (Stopp auf der falschen Seite des Einstiegs).")
+                    else:
+                        st.dataframe(_tt, hide_index=True, use_container_width=True)
+                    _sd = "Hoch" if _pl["side"] == "long" else "Tief"
+                    st.markdown(
+                        f"- **Einstieg A (Stop-Order):** ein Tick {'über' if _pl['side'] == 'long' else 'unter'} dem {_sd} von gestern/heute – du wirst nur ausgeführt, wenn die Gegenwelle endet.\n"
+                        f"- **Einstieg B (Limit im Wert):** morgiger EMA-13 ≈ {_pl['ema_tomorrow']:.2f} minus Ø Penetration {_pl['avg_pen']:.2f} der letzten 30 Tage.\n"
+                        "- **Stopp** nie auf runden Zahlen und nie direkt unter dem offensichtlichen Tief (SafeZone = Rauschen der letzten 20 Tage × Faktor, Nics Stopp = zweittiefstes Tief, ATR-Stopp). Der Stopp wird nur nachgezogen, nie weiter weg gesetzt.\n"
+                        "- **Chance/Risiko mindestens 2:1**, sonst lohnt der Trade laut Elder nicht. Ziele liegen im Wert bzw. an der Gegenseite des Kanals.\n"
+                        "- **2 %-Regel:** höchstens 2 % des Depots riskieren (Abstand Einstieg–Stopp × Stückzahl). **6 %-Regel:** Verluste des Monats plus offenes Risiko dürfen 6 % nicht erreichen, sonst bis Monatsende keine neuen Trades.\n"
+                        "- Ein Gewinn-Trade darf nicht zum Verlust werden: Stopp auf Break-even nachziehen, sobald ein Teil des Zielgewinns erreicht ist. Einstieg, Ziel und Stopp vorher aufschreiben.")
+            else:
+                st.info("Zu wenig Kursdaten für die Elder-Analyse (mindestens 150 Handelstage).")
 
             # ── Trefferquoten-Analyse — Kauf (Boden) und Verkauf (Top) getrennt ──
             st.divider()

@@ -1,0 +1,69 @@
+name: Backtest & Journal-Auswertung
+on:
+  schedule:
+    - cron: '0 6 * * 0'        # sonntags 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      period:
+        description: 'Kurs-Historie (5y, 10y, max)'
+        type: string
+        default: '10y'
+      limit:
+        description: 'Nur die ersten N Ticker (0 = alle; zum Testen z. B. 100)'
+        type: string
+        default: '0'
+      mode:
+        description: 'Was rechnen? both = alles, pooled = nur Backtest, sweep = nur Sweep, concept = nur Gesamttest (Stopp/Ziel + Marktbreite)'
+        type: choice
+        options: [both, pooled, sweep, concept]
+        default: both
+
+permissions:
+  contents: write
+
+concurrency:
+  group: backtest
+  cancel-in-progress: false
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Gepoolter Backtest
+        if: ${{ inputs.mode != 'sweep' && inputs.mode != 'concept' }}
+        run: python pooled_backtest.py --period "${{ inputs.period || '10y' }}" --limit "${{ inputs.limit || '0' }}" --out backtest_results
+      - name: Parameter-Sweep (Training/Test)
+        if: ${{ inputs.mode != 'pooled' && inputs.mode != 'concept' }}
+        run: python sweep_backtest.py --period "${{ inputs.period || '10y' }}" --limit "${{ inputs.limit || '0' }}" --out sweep_results
+      - name: Gesamttest (Stopp/Ziel + Marktbreite)
+        if: ${{ inputs.mode != 'pooled' && inputs.mode != 'sweep' }}
+        run: python concept_backtest.py --period "${{ inputs.period || '10y' }}" --limit "${{ inputs.limit || '0' }}" --out concept_results
+      - name: Journal nachtragen und auswerten
+        run: python signal_journal.py --evaluate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backtest-ergebnisse
+          path: |
+            backtest_results/
+            sweep_results/
+            concept_results/
+            journal_report.md
+      - name: Ergebnisse committen
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backtest_results sweep_results concept_results signal_journal.csv journal_report.md 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "Keine Änderungen."
+          else
+            git commit -m "Backtest + Journal $(date -u +%F)"
+            git pull --rebase --autostash
+            git push
+          fi

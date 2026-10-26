@@ -19,7 +19,7 @@ from ticker_search import search_ticker, label_to_ticker, get_display_name, get_
 from automation_script import add_relative_strength
 from volume_profile import compute_profile, describe_profile, build_profile_figure
 from options_data import get_options_summary, describe_options
-from elder_view import compute_elder, trade_table, build_elder_figure
+from elder_view import compute_elder, trade_table, build_elder_figure, historic_trades
 
 APP_URL = "https://stockupdate-65qjxum6gq2gpjpr5exqfd.streamlit.app"
 
@@ -721,7 +721,44 @@ with tab2:
                                      hide_index=True, use_container_width=True)
                 _ec1, _ec2 = st.tabs(["Tageschart (Screen 2/3)", "Wochenchart (Screen 1)"])
                 with _ec1:
-                    st.plotly_chart(build_elder_figure(elder, weekly=False), use_container_width=True, key="elder_chart_d")
+                    _h1, _h2 = st.columns([2, 1])
+                    _show = _h1.checkbox("Historische Elder-Einstiege und -Ausstiege einzeichnen", value=True, key="elder_hist_on",
+                                         help="Zeigt, wann die Regeln in der Vergangenheit gegriffen hätten. Stern = Einser-Trade (Apgar ≥ 7), Dreieck = Elder-Einstieg "
+                                              "(Wochentrend erlaubt, Rücksetzer, höchstens in der Value Zone). Gepunktete Linie = Verlauf bis zum Ausstieg (grün Gewinn, rot Verlust).")
+                    _bars = _h2.selectbox("Zeitraum", [150, 300, 500, 750], index=2 if _show else 0, format_func=lambda v: f"{v} Handelstage", key="elder_hist_bars")
+                    _tr = None
+                    if _show:
+                        try:
+                            _tr = historic_trades(elder)
+                        except Exception as _e:
+                            st.warning(f"Historische Signale nicht berechenbar: {_e}")
+                    st.plotly_chart(build_elder_figure(elder, weekly=False, bars=int(_bars), trades=_tr), use_container_width=True, key="elder_chart_d")
+                    if _tr is not None and len(_tr):
+                        _t0 = elder["x"].index[-int(_bars)] if len(elder["x"]) > int(_bars) else elder["x"].index[0]
+                        _v = _tr[_tr["entry_date"] >= _t0]
+                        if len(_v):
+                            _done = _v[~_v["open"]]
+                            _lines = []
+                            for _k, _n in (("Einser", "Einser-Trades"), ("Elder", "Elder-Einstiege")):
+                                _s = _done[_done["kind"] == _k]
+                                _lines.append(f"**{_n}:** {int((_v['kind'] == _k).sum())} im Zeitraum" +
+                                              (f", abgeschlossen {len(_s)}, Trefferquote {(_s['R'] > 0).mean() * 100:.0f} %, Ø {_s['R'].mean():+.2f} R" if len(_s) else ""))
+                            st.markdown(" · ".join(_lines))
+                            with st.expander("Alle Einstiege und Ausstiege im Zeitraum"):
+                                _x = _v.copy()
+                                _x["Richtung"] = _x["side"].map({"long": "Kauf", "short": "Short"})
+                                _x = _x.rename(columns={"kind": "Art", "entry_date": "Einstieg am", "entry": "Einstiegskurs", "stop": "Stopp", "target": "Ziel",
+                                                        "exit_date": "Ausstieg am", "exit": "Ausstiegskurs", "reason": "Grund", "R": "Ergebnis (R)"})
+                                _x["Einstieg am"] = pd.to_datetime(_x["Einstieg am"]).dt.strftime("%d.%m.%Y")
+                                _x["Ausstieg am"] = pd.to_datetime(_x["Ausstieg am"]).dt.strftime("%d.%m.%Y")
+                                st.dataframe(_x[["Richtung", "Art", "Einstieg am", "Einstiegskurs", "Stopp", "Ziel", "Ausstieg am", "Ausstiegskurs", "Grund", "Ergebnis (R)"]]
+                                             .round(2), hide_index=True, use_container_width=True)
+                            st.caption("Regeln wie im Gesamttest: Einstieg zum Open des Folgetags, Stopp 2×ATR, Ziel 2 R, Stopp auf Einstand ab +1 R, Zeitstopp 40 Tage. "
+                                       "Das zeigt, wo die Regeln angesprungen wären – keine Gewinnaussage (kein Vergleich mit Zufall, keine Kosten). Die Einser-Erkennung ist eine Näherung.")
+                        else:
+                            st.caption("Im gewählten Zeitraum gab es keinen Elder-Einstieg.")
+                    elif _tr is not None:
+                        st.caption("Keine historischen Elder-Einstiege gefunden.")
                 with _ec2:
                     st.plotly_chart(build_elder_figure(elder, weekly=True), use_container_width=True, key="elder_chart_w")
                 st.caption("Balkenfarbe = Impuls-System (grün: EMA 13 und MACD-Histogramm 12/26/9 steigen, rot: beide fallen, blau: gemischt). "

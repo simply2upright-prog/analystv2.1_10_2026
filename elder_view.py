@@ -610,7 +610,144 @@ def trade_table(plan: dict, equity: float, risk_pct: float = 2.0) -> pd.DataFram
 # ─────────────────────────────────────────────────────────────────────────────
 # Chart
 # ─────────────────────────────────────────────────────────────────────────────
-def build_elder_figure(res: dict, weekly: bool = False, bars: int | None = None, height: int = 640) -> go.Figure:
+# ─────────────────────────────────────────────────────────────────────────────
+# Historische Einstiege/Ausstiege (dieselben Regeln wie concept_backtest.py, ohne Vorgriff)
+# ─────────────────────────────────────────────────────────────────────────────
+ATR_MULT, TARGET_R, BE_R, N_HOLD, COOLDOWN = 2.0, 2.0, 1.0, 40, 10
+
+
+def _ref_lines_np(x: np.ndarray, lookback: int = 125, step: int = 63) -> tuple[np.ndarray, np.ndarray]:
+    """Elders 5-%-Regel: Bezugslinien = 5./95. Perzentil der letzten ~6 Monate, alle 3 Monate neu (nur Vergangenheit)."""
+    n = len(x)
+    lo, hi = np.full(n, np.nan), np.full(n, np.nan)
+    for s in range(lookback, n, step):
+        w = x[s - lookback:s]
+        w = w[np.isfinite(w)]
+        if len(w) >= 60:
+            lo[s:s + step], hi[s:s + step] = np.percentile(w, 5), np.percentile(w, 95)
+    return lo, hi
+
+
+def _any_recent_np(b: np.ndarray, n: int) -> np.ndarray:
+    c = np.cumsum(np.asarray(b, bool).astype(int))
+    w = c.copy()
+    w[n:] = c[n:] - c[:-n]
+    return w > 0
+
+
+def _sh(a: np.ndarray, k: int, fill):
+    out = np.full(a.shape, fill, dtype=a.dtype)
+    out[k:] = a[:-k]
+    return out
+
+
+def historic_trades(res: dict) -> pd.DataFrame:
+    """
+    Alle historischen Elder-Einstiege der Tagesreihe samt simuliertem Ausstieg.
+      Einstieg 'Elder'  : Wochen-EMA13 in Trendrichtung, Wochen-Impuls nicht gegen den Trade (Zensur), Slow-Stochastik(5) an der
+                          5-%-Linie (Rücksetzer), Kurs höchstens in der Value Zone. Signal = Schlusskurs, Einstieg Open Folgetag.
+      Einstieg 'Einser' : zusätzlich Trade-Apgar-Näherung >= 7 ohne Null-Zeile (Fehlausbruch 0/1, ohne Divergenz).
+      Ausstieg          : Stopp 2 x ATR, Ziel 2 R, Stopp auf Einstand ab +1 R, Zeitstopp nach 40 Tagen.
+    Spalten: side, kind, entry_date, entry, stop, target, exit_date, exit, reason, R, open
+    """
+    x, w = res["x"], res["w"]
+    n = len(x)
+    if n < 200:
+        return pd.DataFrame()
+    c, o, h, l = (x[k].to_numpy(float) for k in ("Close", "Open", "High", "Low"))
+    atr = x["atr14"].to_numpy(float)
+    # Wochenwerte = letzte ABGESCHLOSSENE Woche (Beschriftung = Freitag <= heutiges Datum)
+    wf = w.reindex(x.index, method="ffill")
+    w_ema_s = np.sign(w["ema13"].diff()).reindex(x.index, method="ffill").to_numpy(float)
+    w_h_s = np.sign(w["hist"].diff()).reindex(x.index, method="ffill").to_numpy(float)
+    w_h = wf["hist"].to_numpy(float)
+    w_green, w_red = (w_ema_s > 0) & (w_h_s > 0), (w_ema_s < 0) & (w_h_s < 0)
+    ema13, ema26 = x["ema13"].to_numpy(float), x["ema26"].to_numpy(float)
+    d_h = x["hist"].to_numpy(float)
+    e_s, h_s = np.r_[np.nan, np.sign(np.diff(ema13))], np.r_[np.nan, np.sign(np.diff(d_h))]
+    d_green, d_red = (e_s > 0) & (h_s > 0), (e_s < 0) & (h_s < 0)
+    d_h_s = h_s
+    zlo, zhi = np.minimum(ema13, ema26), np.maximum(ema13, ema26)
+    st = x["stoch5"].to_numpy(float)
+    st_lo, st_hi = _ref_lines_np(st)
+    ref_lo = _sh(pd.Series(l).rolling(30).min().to_numpy(), 8, np.nan)
+    ref_hi = _sh(pd.Series(h).rolling(30).max().to_numpy(), 8, np.nan)
+    with np.errstate(invalid="ignore"):
+        fb_buy = (pd.Series(l).rolling(8).min().to_numpy() < ref_lo) & (c > ref_lo)
+        fb_sell = (pd.Series(h).rolling(8).max().to_numpy() > ref_hi) & (c < ref_hi)
+    rows = []
+    for buy in (True, False):
+        sgn = 1.0 if buy else -1.0
+        with np.errstate(invalid="ignore"):
+            adv_w, adv_d = (w_red, d_red) if buy else (w_green, d_green)
+            trend_ok = (w_ema_s == sgn) & ~adv_w
+            pull = (st <= st_lo) if buy else (st >= st_hi)
+            inzone = (c <= zhi) if buy else (c >= zlo)
+            elder = trend_ok & pull & inzone
+            # Trade-Apgar-Näherung
+            def imp(adv, g, r):
+                after = _any_recent_np(_sh(adv, 1, False), 15)
+                q = np.ones(n); q[adv] = 0
+                q[(~adv) & (~g & ~r) & after] = 2
+                return q
+            q1, q2 = imp(adv_w, w_green, w_red), imp(adv_d, d_green, d_red)
+            if buy:
+                q3 = np.where(c > zhi, 0, np.where(c >= zlo, 1, 2)).astype(float); q4 = fb_buy.astype(float)
+                q5 = ((w_h < 0) & (w_h_s > 0)).astype(float) + ((d_h < 0) & (d_h_s > 0) & (c <= zhi)).astype(float)
+            else:
+                q3 = np.where(c < zlo, 0, np.where(c <= zhi, 1, 2)).astype(float); q4 = fb_sell.astype(float)
+                q5 = ((w_h > 0) & (w_h_s < 0)).astype(float) + ((d_h > 0) & (d_h_s < 0) & (c >= zlo)).astype(float)
+            tot = q1 + q2 + q3 + q4 + q5
+            einser = (tot >= 7) & (q1 > 0) & (q2 > 0) & (q3 > 0) & (q4 > 0) & (q5 > 0) & (w_ema_s == sgn)
+        for kind, cond in (("Einser", einser), ("Elder", elder)):
+            cond = np.asarray(cond, bool)
+            prev = np.zeros(n, bool); prev[1:] = cond[:-1]
+            last = -10 ** 9
+            for i in np.flatnonzero(cond & ~prev):
+                i = int(i)
+                if i - last <= COOLDOWN or i + 1 >= n:
+                    continue
+                if kind == "Elder" and einser[i]:
+                    last = i
+                    continue            # schon als Einser erfasst
+                last = i
+                e = o[i + 1]; risk = ATR_MULT * atr[i]
+                if not (np.isfinite(e) and np.isfinite(risk) and 0 < risk < 0.5 * e):
+                    continue
+                stop0, tgt, bet = e - sgn * risk, e + sgn * TARGET_R * risk, e + sgn * BE_R * risk
+                stop, be, ex, reason, rr = stop0, False, None, None, None
+                for k in range(N_HOLD):
+                    j = i + 1 + k
+                    if j >= n:
+                        break
+                    st_ = e if be else stop
+                    if (buy and o[j] <= st_) or ((not buy) and o[j] >= st_):
+                        ex, px, reason = j, o[j], ("Einstand (Lücke)" if be else "Stopp (Lücke)")
+                    elif (buy and l[j] <= st_) or ((not buy) and h[j] >= st_):
+                        ex, px, reason = j, st_, ("Einstand" if be else "Stopp")
+                    elif (buy and h[j] >= tgt) or ((not buy) and l[j] <= tgt):
+                        ex, px, reason = j, tgt, "Ziel 2R"
+                    elif k == N_HOLD - 1:
+                        ex, px, reason = j, c[j], "Zeitstopp"
+                    if ex is not None:
+                        rr = sgn * (px - e) / risk
+                        break
+                    if (buy and h[j] >= bet) or ((not buy) and l[j] <= bet):
+                        be = True
+                is_open = ex is None
+                if is_open:
+                    ex, px = n - 1, c[-1]
+                    rr = sgn * (px - e) / risk
+                    reason = "offen"
+                rows.append({"side": "long" if buy else "short", "kind": kind, "entry_date": x.index[i + 1], "entry": float(e),
+                             "stop": float(stop0), "target": float(tgt), "exit_date": x.index[ex], "exit": float(px),
+                             "reason": reason, "R": float(rr), "open": bool(is_open)})
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows).sort_values("entry_date").reset_index(drop=True)
+
+
+def build_elder_figure(res: dict, weekly: bool = False, bars: int | None = None, height: int = 640, trades: pd.DataFrame | None = None) -> go.Figure:
     x = res["w"] if weekly else res["x"]
     n = bars or (78 if weekly else 150)
     t = x.tail(n)
@@ -629,6 +766,29 @@ def build_elder_figure(res: dict, weekly: bool = False, bars: int | None = None,
         k = res["channel"]["k"]
         fig.add_trace(go.Scatter(x=t.index, y=t["ema26"] * (1 + k), name="Kanal oben", line=dict(color="#94a3b8", width=1, dash="dot")), row=1, col=1)
         fig.add_trace(go.Scatter(x=t.index, y=t["ema26"] * (1 - k), name="Kanal unten", line=dict(color="#94a3b8", width=1, dash="dot")), row=1, col=1)
+    if trades is not None and len(trades) and not weekly:
+        t0 = t.index[0]
+        tt = trades[trades["exit_date"] >= t0]
+        for kind, sym, size in (("Einser", "star", 14), ("Elder", "triangle", 10)):
+            for side in ("long", "short"):
+                a = tt[(tt["kind"] == kind) & (tt["side"] == side) & (tt["entry_date"] >= t0)]
+                if a.empty:
+                    continue
+                up = side == "long"
+                fig.add_trace(go.Scatter(
+                    x=a["entry_date"], y=a["entry"], mode="markers", name=f"{kind}-{'Kauf' if up else 'Short'}",
+                    marker=dict(symbol=sym if kind == "Einser" else ("triangle-up" if up else "triangle-down"), size=size,
+                                color="#22d3ee" if up else "#fb923c", line=dict(color="#0e1117", width=1)),
+                    customdata=np.stack([a["stop"], a["target"], a["R"], a["reason"]], axis=1),
+                    hovertemplate=f"{kind} {'Kauf' if up else 'Short'} %{{x|%d.%m.%Y}}<br>Einstieg %{{y:.2f}}<br>Stopp %{{customdata[0]:.2f}} · Ziel %{{customdata[1]:.2f}}"
+                                  "<br>Ergebnis %{customdata[2]:+.2f} R (%{customdata[3]})<extra></extra>"), row=1, col=1)
+        for _, r in tt.iterrows():
+            if r["exit_date"] < t0:
+                continue
+            col = "#4ade80" if r["R"] > 0.05 else ("#f87171" if r["R"] < -0.05 else "#94a3b8")
+            fig.add_trace(go.Scatter(x=[max(r["entry_date"], t0), r["exit_date"]], y=[r["entry"], r["exit"]], mode="lines+markers",
+                                     line=dict(color=col, width=1.2, dash="dot"), marker=dict(symbol=["circle-open", "x"], size=[1, 8], color=col),
+                                     showlegend=False, hoverinfo="skip"), row=1, col=1)
     hcol = ["#4ade80" if v >= 0 else "#f87171" for v in t["hist"]]
     fig.add_trace(go.Bar(x=t.index, y=t["hist"], marker_color=hcol, opacity=0.75, name="MACD-Histogramm 12/26/9"), row=2, col=1)
     fig.add_hline(y=0, line_color="#475569", line_width=1, row=2, col=1)

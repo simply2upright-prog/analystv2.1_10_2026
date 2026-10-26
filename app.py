@@ -22,7 +22,7 @@ from options_data import get_options_summary, describe_options
 from recent_signals import scan_recent
 from elder_view import compute_elder, trade_table, build_elder_figure, historic_trades
 
-APP_URL = "https://stockupdate-65qjxum6gq2gpjpr5exqfd.streamlit.app"
+APP_URL = "https://analystv2x1.streamlit.app/"
 
 # ─── PAGE CONFIG ──────────────────────────────────────────────────────────────
 st.set_page_config(page_title="In8Invest Scanner", page_icon="📊", layout="wide")

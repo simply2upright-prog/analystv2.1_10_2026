@@ -19,6 +19,7 @@ from ticker_search import search_ticker, label_to_ticker, get_display_name, get_
 from automation_script import add_relative_strength
 from volume_profile import compute_profile, describe_profile, build_profile_figure
 from options_data import get_options_summary, describe_options
+from recent_signals import scan_recent
 from elder_view import compute_elder, trade_table, build_elder_figure, historic_trades
 
 APP_URL = "https://stockupdate-65qjxum6gq2gpjpr5exqfd.streamlit.app"
@@ -314,6 +315,50 @@ with tab1:
             f"<div style='overflow-x:auto'><table style='border-collapse:collapse;width:100%;"
             f"font-size:13px;font-family:sans-serif'>{thead}<tbody>{tbody}</tbody></table></div>",
             unsafe_allow_html=True)
+
+    # ── Suche: Signale der letzten X Handelstage ─────────────────────────────────
+    st.divider()
+    st.subheader("🕒 Signale der letzten Tage")
+    st.caption("Die Mail zeigt nur, was HEUTE alle vier Kriterien erfüllt. Hier findest du auch Werte, die in den letzten Tagen ein Signal hatten. "
+               "**4/4** = alle vier Kriterien am selben Tag (Definition der Mail, auf zurückliegende Tage angewandt). "
+               "**Einstieg** = die grünen/roten Dreiecke im Chart: Die Extrem-Phase begann bis zu 20 Tage früher und wurde jetzt durch MACD-Dreh oder 2 % Kursabstand bestätigt "
+               "(die übrigen Kriterien müssen dann nicht mehr gelten – deshalb weichen Chart und Mail ab). **3/4** = Vorwarnung mit beiden Oszillatoren im Extrem.")
+    _r1, _r2, _r3 = st.columns([3, 2, 2])
+    _rgrp = _r1.selectbox("📂 Markt / Index / Sektor:", ["🌍 Alle Gruppen"] + get_all_groups(), key="recent_grp")
+    _rdays = _r2.slider("Letzte … Handelstage", 1, 30, 5, key="recent_days")
+    _rkinds = _r3.multiselect("Signal-Art", ["4/4", "Einstieg", "3/4"], default=["4/4", "Einstieg"], key="recent_kinds")
+    if st.button("🔎 Signale der letzten Tage suchen", key="recent_go"):
+        _tk = get_all_tickers() if _rgrp == "🌍 Alle Gruppen" else get_tickers_by_group(_rgrp)
+        _pg, _stt = st.progress(0), st.empty()
+
+        def _rprog(done, total, phase):
+            _stt.text(f"Lade Kursdaten (Batch): {done}/{total} Ticker")
+            _pg.progress(min(done / max(total, 1), 1.0) * 0.95)
+        _rdf, _rfail = scan_recent(_tk, days=int(_rdays), kinds=tuple(_rkinds) or ("4/4",), progress_cb=_rprog)
+        _pg.progress(1.0)
+        st.session_state["recent_df"], st.session_state["recent_meta"] = _rdf, {"days": int(_rdays), "n": len(_tk), "failed": len(_rfail)}
+        _stt.success(f"✅ {len(_rdf)} Signale in {len(_tk)} Titeln gefunden" + (f" ({len(_rfail)} ohne Daten)" if _rfail else ""))
+    _rdf = st.session_state.get("recent_df")
+    if _rdf is not None and len(_rdf):
+        from detail_engine import _search_display_name
+        _x = _rdf.copy()
+        _x["Name"] = [(_search_display_name(t).split(" — ", 1)[-1].split(" · ")[0] if t else t) for t in _x["Ticker"]]
+        _f1, _f2 = st.columns(2)
+        _side = _f1.radio("Seite", ["Alle", "Kauf", "Verkauf"], horizontal=True, key="recent_side")
+        _only = _f2.checkbox("Nur Titel, deren Signal noch aktuell ist (Serie reicht bis heute / heute bestätigt)", key="recent_active")
+        if _side != "Alle":
+            _x = _x[_x["Seite"] == _side]
+        if _only:
+            _x = _x[(_x["Heute_aktiv"]) | (_x.get("Serie_bis_heute", False) == True)]
+        _x["Datum"] = pd.to_datetime(_x["Datum"]).dt.strftime("%d.%m.%Y")
+        _show = _x[["Ticker", "Name", "Seite", "Art", "Datum", "Handelstage_her", "Kurs_damals", "Kurs_jetzt", "Veraenderung_%", "Trend_jetzt"]].rename(columns={
+            "Handelstage_her": "vor (Handelstage)", "Kurs_damals": "Kurs am Signaltag", "Kurs_jetzt": "Kurs jetzt",
+            "Veraenderung_%": "seitdem % (in Signalrichtung)", "Trend_jetzt": "Trend (SMA200)"})
+        st.dataframe(_show.round(2), hide_index=True, use_container_width=True)
+        st.caption("„seitdem %“ ist in Signalrichtung gerechnet (bei Verkauf: Kursrückgang = positiv). Beim Einstieg ist der Signaltag der Bestätigungstag, "
+                   "ausgeführt würde zum Open des Folgetags. Einzelne Titel prüfst du im Tab „Detail-Analyse“.")
+    elif _rdf is not None:
+        st.info("Keine Signale im gewählten Zeitraum.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 2 — DETAIL-ANALYSE

@@ -46,8 +46,10 @@ jobs:
         if: ${{ inputs.mode != 'pooled' && inputs.mode != 'sweep' }}
         run: python concept_backtest.py --period "${{ inputs.period || '10y' }}" --limit "${{ inputs.limit || '0' }}" --out concept_results
       - name: Journal nachtragen und auswerten
+        continue-on-error: true      # ein Journal-Problem darf die Backtest-Ergebnisse nicht verwerfen
         run: python signal_journal.py --evaluate
       - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
         with:
           name: backtest-ergebnisse
           path: |
@@ -56,6 +58,7 @@ jobs:
             concept_results/
             journal_report.md
       - name: Ergebnisse committen
+        if: ${{ always() }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

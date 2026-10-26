@@ -65,6 +65,14 @@ def indicators(d: pd.DataFrame) -> pd.DataFrame:
     lo14, hi14 = l.rolling(14).min(), h.rolling(14).max()
     k = (c - lo14) / (hi14 - lo14).replace(0, np.nan) * 100
     x["stoch"] = k.rolling(3).mean()
+    # Elders Standard (Kap. 26/27): Slow-Stochastik über 5 Tage (%K 5, zweimal über 3 geglättet) und 13-Tage-RSI (Wilder)
+    lo5, hi5 = l.rolling(5).min(), h.rolling(5).max()
+    k5 = (c - lo5) / (hi5 - lo5).replace(0, np.nan) * 100
+    x["stoch5"] = k5.rolling(3).mean().rolling(3).mean()
+    dc = c.diff()
+    gain = dc.clip(lower=0).ewm(alpha=1 / 13, adjust=False).mean()
+    loss = (-dc.clip(upper=0)).ewm(alpha=1 / 13, adjust=False).mean()
+    x["rsi13"] = 100 - 100 / (1 + gain / loss.replace(0, np.nan))
     # Directional System (13)
     up, dn = h.diff(), -l.diff()
     pdm = np.where((up > dn) & (up > 0), up, 0.0)
@@ -179,6 +187,99 @@ def channel(x: pd.DataFrame, n: int = 100) -> dict | None:
 # ─────────────────────────────────────────────────────────────────────────────
 # Gesamt-Einordnung
 # ─────────────────────────────────────────────────────────────────────────────
+
+def ref_lines(series: pd.Series, n: int = 125) -> tuple[float, float]:
+    """Elders 5-%-Regel (Kap. 25/27): Bezugslinien so legen, dass der Oszillator in den letzten ~6 Monaten nur 5 % der Zeit jenseits liegt."""
+    t = series.dropna().tail(n)
+    if len(t) < 60:
+        return (np.nan, np.nan)
+    return float(np.percentile(t, 5)), float(np.percentile(t, 95))
+
+
+def season(x: pd.DataFrame) -> str:
+    """Indikator-Jahreszeit des MACD-Histogramms (Kap. 32): steigt unter Null = Frühling, steigt über Null = Sommer,
+    fällt über Null = Herbst, fällt unter Null = Winter."""
+    h, hp = float(x["hist"].iloc[-1]), float(x["hist"].iloc[-2])
+    rising = h > hp
+    if h < 0:
+        return "Frühling" if rising else "Winter"
+    return "Sommer" if rising else "Herbst"
+
+
+def false_breakout(x: pd.DataFrame, kind: str, look: int = 8, base: int = 30) -> str | None:
+    """Fehlausbruch (Kap. 55/58): Kurs durchbricht das Tief (Hoch) der letzten ~30 Balken und schließt wieder darüber (darunter).
+    Gibt 'done' (Rückkehr bereits erfolgt) oder 'pending' (Ausbruch läuft noch) zurück."""
+    if len(x) < base + look + 2:
+        return None
+    ref = x.iloc[-(base + look):-look]
+    rec = x.iloc[-look:]
+    if kind == "bull":
+        lvl = float(ref["Low"].min())
+        if (rec["Low"] < lvl).any():
+            return "done" if float(x["Close"].iloc[-1]) > lvl else "pending"
+    else:
+        lvl = float(ref["High"].max())
+        if (rec["High"] > lvl).any():
+            return "done" if float(x["Close"].iloc[-1]) < lvl else "pending"
+    return None
+
+
+def _scale(v: int) -> str:
+    return {0: "0 – rot", 1: "1 – gelb", 2: "2 – grün"}[v]
+
+
+def trade_apgar(side: str, w: pd.DataFrame, x: pd.DataFrame, divs: list, price: float, zone_lo: float, zone_hi: float) -> dict:
+    """Elders 'Trade-Apgar' (Kap. 58) für die Strategie 'Fehlausbruch mit Divergenz': fünf Fragen mit 0/1/2 Punkten.
+    Ab 7 Punkten und ohne Null-Zeile gilt ein Trade als 'Einser-Trade'. Frage 4 und 5 sind hier regelbasiert nachgebildet."""
+    buy = side == "long"
+    kind = "bull" if buy else "bear"
+    adverse = "red" if buy else "green"
+
+    def imp_score(frame: pd.DataFrame) -> tuple[int, str]:
+        cur = frame["impulse"].iloc[-1]
+        if cur == adverse:
+            return 0, "Impuls " + IMPULSE_TXT[cur] + " verbietet den Trade"
+        if cur == "blue":
+            after = (frame["impulse"].iloc[-4:-1] == adverse).any()
+            return (2, "blau nach " + ("rot" if buy else "grün") + " – Gegenseite lässt nach") if after else (1, "blau (neutral)")
+        return 1, "grün – erlaubt, aber evtl. schon spät" if buy else "rot – erlaubt, aber evtl. schon spät"
+
+    q = []
+    sc, tx = imp_score(w); q.append(("Wochen-Impuls", sc, tx))
+    sc, tx = imp_score(x); q.append(("Tages-Impuls", sc, tx))
+    if buy:
+        sc = 0 if price > zone_hi else (1 if price >= zone_lo else 2)
+        tx = ["über dem Wert – evtl. zu spät", "in der Value Zone", "unter dem Wert – Schnäppchen möglich"][sc]
+    else:
+        sc = 0 if price < zone_lo else (1 if price <= zone_hi else 2)
+        tx = ["unter dem Wert – evtl. zu spät zum Shorten", "in der Value Zone", "über dem Wert – gute Short-Lage"][sc]
+    q.append(("Tageskurs zum Wert", sc, tx))
+    fb = false_breakout(x, kind)
+    dv = [r for r in divs if r["kind"] == kind and r["frame"] == "Tageschart"]
+    if fb == "pending" and dv:
+        sc, tx = 2, "Fehlausbruch bahnt sich an, Divergenz vorhanden"
+    elif fb == "done":
+        sc, tx = 1, "Fehlausbruch bereits erfolgt (Kurs ist zurück über/unter der Marke)"
+    elif dv:
+        sc, tx = 1, "Divergenz ohne Fehlausbruch"
+    else:
+        sc, tx = 0, "kein Fehlausbruch, keine Divergenz"
+    q.append(("Fehlausbruch / Divergenz", sc, tx))
+
+    def ideal(frame: pd.DataFrame, daily: bool) -> bool:
+        ssn = season(frame)
+        ok = ssn == ("Frühling" if buy else "Herbst")
+        if daily:
+            ok = ok and (price <= zone_hi if buy else price >= zone_lo)
+        return ok
+
+    ni = int(ideal(w, False)) + int(ideal(x, True))
+    q.append(("Perfektion der Zeitrahmen", ni, f"{ni} von 2 Zeitrahmen im Idealmuster ({'Frühling' if buy else 'Herbst'} im MACD-Histogramm; Tageskurs nicht {'über' if buy else 'unter'} dem Wert)"))
+    total = sum(v for _, v, _ in q)
+    zero = [n for n, v, _ in q if v == 0]
+    return {"items": q, "total": int(total), "zeros": zero, "einser": bool(total >= 7 and not zero)}
+
+
 def _row(title, status, text, ref):
     return {"titel": title, "status": status, "text": text, "ref": ref}      # status: ok | warn | bad | info
 
@@ -226,22 +327,26 @@ def compute_elder(df: pd.DataFrame) -> dict | None:
         rows.append(_row("Qualität des Wochensignals", "ok", best_zone, "Kap. 23"))
 
     # ── Screen 2: Tages-Oszillatoren (Rücksetzer gegen die Gezeiten) ─────────────
-    fi2 = float(last["fi2"]); stoch = float(last["stoch"]) if not np.isnan(last["stoch"]) else np.nan
+    fi2 = float(last["fi2"])
+    stoch = float(last["stoch5"]) if not np.isnan(last["stoch5"]) else np.nan
+    st_lo, st_hi = ref_lines(x["stoch5"])
+    rsi = float(last["rsi13"]) if not np.isnan(last["rsi13"]) else np.nan
+    rs_lo, rs_hi = ref_lines(x["rsi13"])
     d_imp = last["impulse"]
     pullback = False
     if bias == "long":
         fi_bad = has_vol and fi2 < 0
-        st_bad = (not np.isnan(stoch)) and stoch < 30
+        st_bad = (not np.isnan(stoch)) and not np.isnan(st_lo) and stoch <= st_lo
         pullback = fi_bad or st_bad
     elif bias == "short":
         fi_bad = has_vol and fi2 > 0
-        st_bad = (not np.isnan(stoch)) and stoch > 70
+        st_bad = (not np.isnan(stoch)) and not np.isnan(st_hi) and stoch >= st_hi
         pullback = fi_bad or st_bad
     parts = []
     if has_vol:
         parts.append(f"2-Tage-Force-Index {'negativ' if fi2 < 0 else 'positiv'}")
     if not np.isnan(stoch):
-        parts.append(f"Stochastik {stoch:.0f}")
+        parts.append(f"Slow-Stochastik(5) {stoch:.0f}")
     parts.append(f"Tages-Impuls {IMPULSE_TXT[d_imp]}")
     if bias == "none":
         rows.append(_row("Screen 2 – Welle gegen die Gezeiten (Tageschart)", "info", "; ".join(parts) + ". Ohne Wochentrend kein Rücksetzer-Signal.", "Kap. 30, 39"))
@@ -315,6 +420,44 @@ def compute_elder(df: pd.DataFrame) -> dict | None:
                              f"{name.capitalize()} MACD-Histogramm-Divergenz {state}; {q}. Kurs-Extrema {r['price_a']:.2f} → {r['price_b']:.2f}.", "Kap. 23"))
     else:
         rows.append(_row("Divergenz", "info", "Keine gültige MACD-Histogramm-Divergenz (Voraussetzung: Histogramm durchbricht zwischen beiden Extremen die Nulllinie).", "Kap. 23"))
+
+    # ── Oszillator-Niveaus nach Elder (Kap. 25–27) ─────────────────────────────
+    if not np.isnan(stoch) and not np.isnan(st_lo):
+        parts_o = [f"Slow-Stochastik(5) {stoch:.0f} (Bezugslinien nach 5-%-Regel: {st_lo:.0f} / {st_hi:.0f})"]
+        if not np.isnan(rsi) and not np.isnan(rs_lo):
+            parts_o.append(f"RSI(13) {rsi:.0f} (Bezugslinien {rs_lo:.0f} / {rs_hi:.0f})")
+        ob = stoch >= st_hi or (not np.isnan(rsi) and not np.isnan(rs_hi) and rsi >= rs_hi)
+        os_ = stoch <= st_lo or (not np.isnan(rsi) and not np.isnan(rs_lo) and rsi <= rs_lo)
+        if bias == "long":
+            if ob:
+                ost, otx = "bad", "Überkauft – Elder: nicht kaufen, wenn der Oszillator überkauft ist (filtert die meisten schlechten Trades)."
+            elif os_:
+                ost, otx = "ok", "Überverkauft im Aufwärtstrend – Elders Kaufsetup: Stop-Order über dem Hoch des letzten Balkens, ohne auf eine Wende zu warten."
+            else:
+                ost, otx = "info", "Weder über- noch unterverkauft."
+        elif bias == "short":
+            if os_:
+                ost, otx = "bad", "Überverkauft – Elder: nicht shorten, wenn der Oszillator überverkauft ist."
+            elif ob:
+                ost, otx = "ok", "Überkauft im Abwärtstrend – Elders Short-Setup: Stop-Order unter dem Tief des letzten Balkens."
+            else:
+                ost, otx = "info", "Weder über- noch unterverkauft."
+        else:
+            ost, otx = "info", "Ohne Wochentrend sind Überkauft/Überverkauft nur im Range (am Kanalrand) brauchbar; in einem Trend rutschen sie dauerhaft in die Extremzone."
+        rows.append(_row("Stochastik & RSI (Elder-Standard)", ost, "; ".join(parts_o) + ". " + otx +
+                         " Signalstärke: Divergenzen > Niveaus > Richtung. Gilt nur zusammen mit dem Wochentrend.", "Kap. 25–27"))
+    ssn_w, ssn_d = season(w), season(x)
+    good_s = "Frühling" if bias != "short" else "Herbst"
+    rows.append(_row("Indikator-Jahreszeit (MACD-Histogramm)", "ok" if (ssn_d == good_s or ssn_w == good_s) else "info",
+                     f"Woche: {ssn_w}, Tag: {ssn_d}. Beste Kaufzeit ist der Frühling (Histogramm steigt unter Null: Angst herrscht noch, Stopp kann eng gesetzt werden), "
+                     f"beste Short-Zeit der Herbst; im Sommer ist das Gewinnpotenzial kleiner und der Stopp weiter weg, im Winter dreht das Chance/Risiko gegen die Bären.", "Kap. 32"))
+    apgar = None
+    if bias in ("long", "short"):
+        apgar = trade_apgar("long" if bias == "long" else "short", w, x, divs, price, zone_lo, zone_hi)
+        rows.append(_row("Trade-Apgar (Einser-Trade?)", "ok" if apgar["einser"] else ("warn" if apgar["total"] >= 5 else "bad"),
+                         f"{apgar['total']} von 10 Punkten" + (" – Einser-Trade (ab 7 Punkten, keine Null)." if apgar["einser"] else
+                         " – kein Einser-Trade" + (f" (Null bei: {', '.join(apgar['zeros'])})" if apgar["zeros"] else " (unter 7 Punkten)") +
+                         ". Elder: Trade lassen und nach einem besseren Kandidaten suchen."), "Kap. 55, 58"))
 
     # ── Volumen / OBV / Kangaroo ───────────────────────────────────────────────
     vol_info = None
@@ -391,12 +534,13 @@ def compute_elder(df: pd.DataFrame) -> dict | None:
             tgt2 = (ch["ema"] + ch["upper"]) / 2 if buy else (ch["ema"] + ch["lower"]) / 2
         else:
             tgt1 = tgt2 = None
-        plan = {"side": side, "entry_stop": entry_stop, "entry_limit": entry_lim, "avg_pen": avg_pen, "ema_tomorrow": ema_tom,
+        one_off = 0.30 * (ch["upper"] - ch["lower"]) if ch else None      # Einser-Ziel: 30 % der Kanalhöhe (Kap. 55)
+        plan = {"one_offset": one_off, "side": side, "entry_stop": entry_stop, "entry_limit": entry_lim, "avg_pen": avg_pen, "ema_tomorrow": ema_tom,
                 "stops": stops, "atr": atr, "target_far": tgt1, "target_near": tgt2}
 
     out = {"price": price, "bias": bias, "weekly_impulse": w_imp, "daily_impulse": d_imp, "pullback": pullback,
            "long_allowed": bool(long_allowed), "short_allowed": bool(short_allowed), "over_upper": bool(over_upper), "under_lower": bool(under_lower),
-           "rows": rows, "plan": plan, "x": x, "w": w, "channel": ch, "adx": adx, "has_volume": has_vol, "vol_ratio": vol_info}
+           "rows": rows, "apgar": apgar, "plan": plan, "x": x, "w": w, "channel": ch, "adx": adx, "has_volume": has_vol, "vol_ratio": vol_info}
     out["verdict"] = _verdict(out)
     return out
 
@@ -418,6 +562,11 @@ def _verdict(o: dict) -> dict:
                 "text": "Elders harte Regel: nie über der oberen Kanallinie kaufen bzw. unter der unteren shorten. Warten, bis der Kurs zurück in den Kanal bzw. die Value Zone kommt."}
     rows = {r["titel"]: r for r in o["rows"]}
     negatives = [r for r in o["rows"] if r["status"] == "bad"]
+    ap = o.get("apgar")
+    if o["pullback"] and not negatives and ap and not ap["einser"]:
+        return {"ampel": "yellow", "titel": f"Elder: {word} erlaubt, aber kein Einser-Trade",
+                "text": f"Wochentrend und Rücksetzer passen, doch der Trade-Apgar liegt bei {ap['total']} von 10 Punkten"
+                        + (f" (Null bei: {', '.join(ap['zeros'])})" if ap["zeros"] else "") + ". Elder handelt erst ab 7 Punkten ohne Null – sonst nach einem besseren Kandidaten suchen."}
     if o["pullback"] and not negatives:
         return {"ampel": "green", "titel": f"Elder: {word}-Gelegenheit",
                 "text": "Wochentrend erlaubt den Trade, und im Tageschart läuft die Gegenwelle. Einstieg per Stop-Order über dem Vortageshoch (bzw. unter dem Tief) oder per Limit-Order im Wert; Stopp und Größe aus dem Plan unten. Chance/Risiko muss mindestens 2:1 sein."}

@@ -712,6 +712,13 @@ with tab2:
                 for _r in elder["rows"]:
                     st.markdown(f"{_ST[_r['status']]} **{_r['titel']}** — {_r['text']}  \n<span style='color:#94a3b8;font-size:0.8em'>Elder, {_r['ref']}</span>",
                                 unsafe_allow_html=True)
+                if elder.get("apgar"):
+                    _ap = elder["apgar"]
+                    with st.expander(f"Trade-Apgar: {_ap['total']} / 10 Punkten – {'Einser-Trade ✅' if _ap['einser'] else 'kein Einser-Trade'}", expanded=False):
+                        st.caption("Elders Punktesystem für die Strategie „Fehlausbruch mit Divergenz“ (fünf Fragen je 0–2 Punkte; handeln erst ab 7 Punkten und ohne Null). "
+                                   "Frage 4 und 5 sind hier regelbasiert nachgebildet, Elder bewertet sie von Hand.")
+                        st.dataframe(pd.DataFrame([{"Frage": n, "Punkte": v, "Begründung": t} for n, v, t in _ap["items"]]),
+                                     hide_index=True, use_container_width=True)
                 _ec1, _ec2 = st.tabs(["Tageschart (Screen 2/3)", "Wochenchart (Screen 1)"])
                 with _ec1:
                     st.plotly_chart(build_elder_figure(elder, weekly=False), use_container_width=True, key="elder_chart_d")
@@ -737,6 +744,7 @@ with tab2:
                         f"- **Einstieg A (Stop-Order):** ein Tick {'über' if _pl['side'] == 'long' else 'unter'} dem {_sd} von gestern/heute – du wirst nur ausgeführt, wenn die Gegenwelle endet.\n"
                         f"- **Einstieg B (Limit im Wert):** morgiger EMA-13 ≈ {_pl['ema_tomorrow']:.2f} minus Ø Penetration {_pl['avg_pen']:.2f} der letzten 30 Tage.\n"
                         "- **Stopp** nie auf runden Zahlen und nie direkt unter dem offensichtlichen Tief (SafeZone = Rauschen der letzten 20 Tage × Faktor, Nics Stopp = zweittiefstes Tief, ATR-Stopp). Der Stopp wird nur nachgezogen, nie weiter weg gesetzt.\n"
+                        + (f"- **Einser-Ziel:** Einstieg {'+' if _pl['side'] == 'long' else '−'} 30 % der Kanalhöhe = {_pl['one_offset']:.2f} je Aktie. Wer mindestens so viel mitnimmt, hat laut Elder einen guten Trade gemacht (Trade-Note ≥ 30 %).\n" if _pl.get("one_offset") else "") +
                         "- **Chance/Risiko mindestens 2:1**, sonst lohnt der Trade laut Elder nicht. Ziele liegen im Wert bzw. an der Gegenseite des Kanals.\n"
                         "- **2 %-Regel:** höchstens 2 % des Depots riskieren (Abstand Einstieg–Stopp × Stückzahl). **6 %-Regel:** Verluste des Monats plus offenes Risiko dürfen 6 % nicht erreichen, sonst bis Monatsende keine neuen Trades.\n"
                         "- Ein Gewinn-Trade darf nicht zum Verlust werden: Stopp auf Break-even nachziehen, sobald ein Teil des Zielgewinns erreicht ist. Einstieg, Ziel und Stopp vorher aufschreiben.")

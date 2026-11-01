@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-25T09:53:58+00:00",
+ "updated": "2026-11-01T11:59:04+00:00",
  "tickers": {
   "000270.KS": {
    "name": "KIA CORP.",
@@ -1046,7 +1046,7 @@
    "name": "CREDIT AGRICOLE",
    "long_name": "Crédit Agricole S.A.",
    "sector": "Financial Services",
-   "industry": "Banks - Regional",
+   "industry": "Banks - Diversified",
    "exchange": "PAR",
    "currency": "EUR",
    "quote_type": "EQUITY",

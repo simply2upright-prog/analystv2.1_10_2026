@@ -116,6 +116,19 @@ def main():
     log.info("%d Ticker", len(tickers))
     frames, failed = engine.download_price_frames(tickers, period="3y")
     now = datetime.now(timezone.utc)
+    # Veraltete Kerzen nachladen: der Sammel-Download liefert für manche Börsen (v. a. Europa) gelegentlich
+    # die letzte Tageskerze noch nicht - dann fehlte z. B. ein 4/4-Signal von gestern. Einzelabruf holt sie.
+    lasts = sorted(pd.Timestamp(d.index[-1]).date() for d in frames.values())
+    ref = lasts[int(len(lasts) * 0.9)] if lasts else None
+    stale = [t for t, d in frames.items() if ref and pd.Timestamp(d.index[-1]).date() < ref]
+    log.info("%d Ticker mit veralteter letzter Kerze (Referenz %s) -> Einzelabruf", len(stale), ref)
+    for t in stale:
+        try:
+            d = engine.clean_price_df(engine.yf.Ticker(t).history(period="3y", auto_adjust=False))
+            if d is not None and not d.empty and pd.Timestamp(d.index[-1]) > pd.Timestamp(frames[t].index[-1]):
+                frames[t] = d
+        except Exception as e:
+            log.debug("%s: %s", t, e)
     sig, bad = {}, []
     for t, df in frames.items():
         try:

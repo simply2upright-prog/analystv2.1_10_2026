@@ -19,6 +19,8 @@ import engine
 log = logging.getLogger("divflow")
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "divflow_signals.json.gz")
+STORE = os.path.join(HERE, "divflow_bars.json.gz")   # Speicher: letzte Kerzen je Ticker (gegen Yahoo-Rückschritte)
+STORE_N = 8
 HIST = 180        # Tage Verlauf für Chart und Einstiege
 COOLDOWN = 10     # Handelstage zwischen zwei Einstiegen derselben Seite
 
@@ -40,7 +42,50 @@ def _chart_tail(t: str):
     q = res["indicators"]["quote"][0]
     idx = pd.to_datetime(res["timestamp"], unit="s", utc=True).tz_convert(res["meta"].get("exchangeTimezoneName", "UTC")).normalize().tz_localize(None)
     df = pd.DataFrame({"Open": q["open"], "High": q["high"], "Low": q["low"], "Close": q["close"], "Volume": q["volume"]}, index=idx)
-    return df[df["Close"].notna()]
+    df = df[df["Close"].notna()]
+    # Fehlt die Tageskerze in der Reihe, aber Yahoo kennt den Schlusskurs der letzten Sitzung (meta), daraus eine Kerze bauen
+    m = res["meta"]
+    try:
+        px, ts = m.get("regularMarketPrice"), m.get("regularMarketTime")
+        if px and ts:
+            d = pd.to_datetime(ts, unit="s", utc=True).tz_convert(m.get("exchangeTimezoneName", "UTC")).normalize().tz_localize(None)
+            if len(df) and d > df.index[-1]:
+                prev = float(df["Close"].iloc[-1])
+                hi, lo = m.get("regularMarketDayHigh") or px, m.get("regularMarketDayLow") or px
+                df.loc[d] = [prev, max(hi, px), min(lo, px), px, m.get("regularMarketVolume") or 0]
+    except Exception:
+        pass
+    return df
+
+
+def _store_load() -> dict:
+    try:
+        with gzip.open(STORE, "rt", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _store_tail(df: pd.DataFrame) -> dict:
+    t = df.tail(STORE_N)
+    g = lambda c: [None if pd.isna(v) else round(float(v), 4) for v in t[c]] if c in t.columns else [None] * len(t)
+    return {"d": [i.strftime("%Y-%m-%d") for i in t.index], "o": g("Open"), "h": g("High"), "l": g("Low"), "c": g("Close"), "v": g("Volume")}
+
+
+def _store_merge(df: pd.DataFrame, rec: dict | None) -> pd.DataFrame:
+    """Gespeicherte Kerzen, die NEUER sind als Yahoos letzte Kerze, wieder anhängen (Yahoo nimmt sie am Wochenende teils zurück)."""
+    if not rec or df is None or df.empty:
+        return df
+    last = pd.Timestamp(df.index[-1]).date().isoformat()
+    rows = [i for i, d in enumerate(rec["d"]) if d > last and rec["c"][i] is not None]
+    if not rows:
+        return df
+    add = pd.DataFrame({"Open": [rec["o"][i] for i in rows], "High": [rec["h"][i] for i in rows], "Low": [rec["l"][i] for i in rows],
+                        "Close": [rec["c"][i] for i in rows], "Volume": [rec["v"][i] or 0 for i in rows]},
+                       index=pd.DatetimeIndex([rec["d"][i] for i in rows]))
+    if getattr(df.index, "tz", None) is not None:
+        add.index = add.index.tz_localize(df.index.tz)
+    return pd.concat([df, add[[c for c in df.columns if c in add.columns]]])
 
 
 def build_record(df: pd.DataFrame) -> dict | None:
@@ -163,9 +208,14 @@ def main():
         time.sleep(0.3)
     log.info("Nachgeladen: %d von %d (Fehler %d)", fixed, len(stale), errs)
     sig, bad = {}, []
+    store, new_store, restored = _store_load(), {}, 0
     for t, df in frames.items():
         try:
             df = engine.drop_incomplete_bar(df, t, now)
+            n0 = len(df)
+            df = _store_merge(df, store.get(t))
+            restored += len(df) - n0 > 0
+            new_store[t] = _store_tail(df)
             rec = build_record(df)
             if rec:
                 sig[t] = rec
@@ -174,6 +224,9 @@ def main():
         except Exception as e:
             log.debug("%s: %s", t, e)
             bad.append(t)
+    log.info("Speicher: %d Ticker mit wiederhergestellter Kerze", restored)
+    with gzip.open(STORE, "wt", encoding="utf-8", compresslevel=9) as f:
+        json.dump(new_store, f, separators=(",", ":"))
     payload = {"updated": now.isoformat(timespec="seconds"), "count": len(sig), "no_data": sorted(set(bad) | set(failed)), "signals": sig}
     with gzip.open(OUT, "wt", encoding="utf-8", compresslevel=9) as f:
         json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))

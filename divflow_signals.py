@@ -31,6 +31,18 @@ def _f(x, nd=4):
     return None if (math.isnan(x) or math.isinf(x)) else round(x, nd)
 
 
+def _chart_tail(t: str):
+    """Letzte ~10 Tageskerzen direkt vom Yahoo-Chart-Endpunkt (unabhängig von yfinance)."""
+    import requests
+    r = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{t}", params={"range": "10d", "interval": "1d"},
+                     headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+    res = r.json()["chart"]["result"][0]
+    q = res["indicators"]["quote"][0]
+    idx = pd.to_datetime(res["timestamp"], unit="s", utc=True).tz_convert(res["meta"].get("exchangeTimezoneName", "UTC")).normalize().tz_localize(None)
+    df = pd.DataFrame({"Open": q["open"], "High": q["high"], "Low": q["low"], "Close": q["close"], "Volume": q["volume"]}, index=idx)
+    return df[df["Close"].notna()]
+
+
 def build_record(df: pd.DataFrame) -> dict | None:
     """Ein Ticker -> Datensatz im Format, das DivFlow (includes/signals.php, tech_import) erwartet."""
     df = engine.clean_price_df(df)
@@ -133,6 +145,17 @@ def main():
             if d is not None and not d.empty and pd.Timestamp(d.index[-1]).date() > pd.Timestamp(frames[t].index[-1]).date():
                 frames[t] = d
                 fixed += 1
+            else:                                   # Zweiter Weg: Yahoo-Chart-Endpunkt direkt, nur neue Kerzen anhängen
+                add = _chart_tail(t)
+                last = pd.Timestamp(frames[t].index[-1]).date()
+                add = add[[pd.Timestamp(i).date() > last for i in add.index]] if add is not None else None
+                if add is not None and len(add):
+                    base = frames[t].copy()
+                    add.index = pd.DatetimeIndex(add.index).tz_localize(base.index.tz) if getattr(base.index, "tz", None) is not None and add.index.tz is None else add.index
+                    frames[t] = pd.concat([base, add[[c for c in base.columns if c in add.columns]]])
+                    fixed += 1
+                    if n < 3:
+                        log.info("DIAG %s per Chart-Endpunkt ergänzt: %s", t, [str(i.date()) for i in add.index])
         except Exception as e:
             errs += 1
             if errs <= 3:

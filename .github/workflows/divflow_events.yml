@@ -1,0 +1,38 @@
+name: DivFlow Events
+on:
+  schedule:
+    - cron: '20 4 * * 1-5'     # werktags frueh: Dividenden-Termine und Quartalszahlen
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: divflow-events
+  cancel-in-progress: false
+
+jobs:
+  events:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Termine laden
+        run: python divflow_events.py
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase --autostash || true
+          git add divflow_events.json.gz
+          if git diff --cached --quiet; then
+            echo "Keine Änderungen."
+          else
+            git commit -m "Update divflow_events.json.gz"
+            git push
+          fi

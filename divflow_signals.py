@@ -8,6 +8,7 @@ import json
 import logging
 import math
 import os
+import time
 from datetime import datetime, timezone
 
 import numpy as np
@@ -122,13 +123,22 @@ def main():
     ref = lasts[int(len(lasts) * 0.9)] if lasts else None
     stale = [t for t, d in frames.items() if ref and pd.Timestamp(d.index[-1]).date() < ref]
     log.info("%d Ticker mit veralteter letzter Kerze (Referenz %s) -> Einzelabruf", len(stale), ref)
-    for t in stale:
+    fixed = errs = 0
+    for n, t in enumerate(stale):
         try:
-            d = engine.clean_price_df(engine.yf.Ticker(t).history(period="3y", auto_adjust=False))
-            if d is not None and not d.empty and pd.Timestamp(d.index[-1]) > pd.Timestamp(frames[t].index[-1]):
+            raw = engine.yf.Ticker(t).history(period="3y", auto_adjust=False)
+            if n < 3:
+                log.info("DIAG %s Roh-Ende: %s", t, [(str(i.date()), None if pd.isna(c) else round(float(c), 3)) for i, c in raw["Close"].tail(3).items()])
+            d = engine.clean_price_df(raw)
+            if d is not None and not d.empty and pd.Timestamp(d.index[-1]).date() > pd.Timestamp(frames[t].index[-1]).date():
                 frames[t] = d
+                fixed += 1
         except Exception as e:
-            log.debug("%s: %s", t, e)
+            errs += 1
+            if errs <= 3:
+                log.warning("Einzelabruf %s: %s", t, e)
+        time.sleep(0.3)
+    log.info("Nachgeladen: %d von %d (Fehler %d)", fixed, len(stale), errs)
     sig, bad = {}, []
     for t, df in frames.items():
         try:

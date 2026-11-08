@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-01T11:59:04+00:00",
+ "updated": "2026-11-08T11:59:57+00:00",
  "tickers": {
   "000270.KS": {
    "name": "KIA CORP.",
@@ -4846,7 +4846,7 @@
    "country": "United Kingdom"
   },
   "HLT": {
-   "name": "Hilton Worldwide Holdings Inc.",
+   "name": "Hilton Worldwide Holdings Inc. Common Stock",
    "long_name": "Hilton Worldwide Holdings Inc.",
    "sector": "Consumer Cyclical",
    "industry": "Lodging",

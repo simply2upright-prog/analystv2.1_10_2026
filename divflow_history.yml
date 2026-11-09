@@ -1,0 +1,42 @@
+name: DivFlow History
+on:
+  schedule:
+    - cron: '40 4 * * 6'     # woechentlich Samstag frueh: lange Kurshistorie
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: divflow-history
+  cancel-in-progress: false
+
+jobs:
+  events:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Historie laden
+        run: python divflow_history.py
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase --autostash || true
+          git add divflow_history.json.gz
+          if git diff --cached --quiet; then
+            echo "Keine Änderungen."
+          else
+            git commit -m "Update divflow_history.json.gz"
+            for i in 1 2 3 4 5; do
+              git pull --rebase origin ${GITHUB_REF_NAME} && git push && break
+              echo "Push abgelehnt (Versuch $i), neuer Versuch ..."; sleep $((i * 5))
+            done
+            git status -sb | head -1
+          fi

@@ -1,0 +1,44 @@
+name: DivFlow Signals
+on:
+  schedule:
+    - cron: '55 17 * * 1-5'    # direkt nach dem Mail-Scan Europa/Asien (Kerzen speichern)
+    - cron: '23 18 * * 1-5'    # Ersatzlauf, falls GitHub den ersten auslässt (Ergebnis ist identisch)
+    - cron: '30 22 * * 1-5'    # werktags nach US-Börsenschluss
+    - cron: '17 23 * * 1-5'    # Ersatzlauf für den US-Lauf
+  workflow_dispatch:
+
+permissions:
+  contents: write              # zum Zurückschreiben von divflow_signals.json.gz
+
+concurrency:
+  group: divflow-signals
+  cancel-in-progress: false
+
+jobs:
+  signals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Signale berechnen
+        run: python divflow_signals.py
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add divflow_signals.json.gz divflow_bars.json.gz
+          if git diff --cached --quiet; then
+            echo "Keine Änderungen."
+          else
+            git commit -m "Update divflow_signals.json.gz"
+            for i in 1 2 3 4 5; do
+              git pull --rebase origin ${GITHUB_REF_NAME} && git push && break
+              echo "Push abgelehnt (Versuch $i), neuer Versuch ..."; sleep $((i * 5))
+            done
+            git status -sb | head -1
+          fi

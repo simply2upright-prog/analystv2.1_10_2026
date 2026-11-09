@@ -1,7 +1,7 @@
 name: Daily Scan
 on:
   schedule:
-    - cron: '00 18 * * 1-5'   # Europa + Asien: nach Xetra/Euronext/LSE-Schluss (19:45 CEST / 18:45 CET)
+    - cron: '0 18 * * 1-5'   # Europa + Asien: nach Xetra/Euronext/LSE-Schluss (19:45 CEST / 18:45 CET)
     - cron: '30 21 * * 1-5'   # USA: nach NYSE/Nasdaq-Schluss (23:30 CEST / 22:30 CET)
   workflow_dispatch:
     inputs:

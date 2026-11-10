@@ -2,7 +2,9 @@ name: DivFlow Signals
 on:
   schedule:
     - cron: '55 17 * * 1-5'    # direkt nach dem Mail-Scan Europa/Asien (Kerzen speichern)
+    - cron: '23 18 * * 1-5'    # Ersatzlauf, falls GitHub den ersten auslässt (Ergebnis ist identisch)
     - cron: '30 22 * * 1-5'    # werktags nach US-Börsenschluss
+    - cron: '17 23 * * 1-5'    # Ersatzlauf für den US-Lauf
   workflow_dispatch:
 
 permissions:
@@ -24,6 +26,8 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - name: Signale berechnen
+        env:
+          DIVFLOW_SYMBOLS_URL: ${{ secrets.DIVFLOW_SYMBOLS_URL }}
         run: python divflow_signals.py
       - name: Commit
         run: |
@@ -34,5 +38,9 @@ jobs:
             echo "Keine Änderungen."
           else
             git commit -m "Update divflow_signals.json.gz"
-            git push
+            for i in 1 2 3 4 5; do
+              git pull --rebase origin ${GITHUB_REF_NAME} && git push && break
+              echo "Push abgelehnt (Versuch $i), neuer Versuch ..."; sleep $((i * 5))
+            done
+            git status -sb | head -1
           fi

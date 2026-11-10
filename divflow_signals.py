@@ -153,6 +153,23 @@ def build_record(df: pd.DataFrame) -> dict | None:
     }
 
 
+def remote_symbols() -> list[str]:
+    """Symbole deiner Positionen aus DivFlow (Secret DIVFLOW_SYMBOLS_URL = .../cron.php?job=symbols&key=...). Fehlt das Secret oder scheitert der Abruf, laeuft alles wie bisher."""
+    import re, urllib.request
+    url = os.environ.get("DIVFLOW_SYMBOLS_URL", "").strip()
+    if not url:
+        return []
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "DivFlow-Action"})
+        txt = urllib.request.urlopen(req, timeout=30).read().decode("utf-8", "replace")
+        out = [ln.strip() for ln in txt.splitlines() if re.fullmatch(r"[A-Za-z0-9.^=\-]{1,20}", ln.strip())]
+        log.info("%d Symbole aus DivFlow", len(out))
+        return out
+    except Exception as e:
+        log.warning("Symbole aus DivFlow nicht ladbar: %s", e)
+        return []
+
+
 def universe() -> list[str]:
     with open(os.path.join(HERE, "ticker_meta.json"), encoding="utf-8") as f:
         meta = json.load(f).get("tickers", {})
@@ -160,6 +177,7 @@ def universe() -> list[str]:
     extra = os.path.join(HERE, "divflow_extra.txt")
     if os.path.exists(extra):
         out += [ln.strip() for ln in open(extra, encoding="utf-8") if ln.strip() and not ln.startswith("#")]
+    out += remote_symbols()
     return sorted(set(out))
 
 

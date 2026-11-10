@@ -1,0 +1,1 @@
+# Zusätzliche Yahoo-Ticker für DivFlow (einer pro Zeile)

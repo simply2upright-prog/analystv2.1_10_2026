@@ -27,6 +27,7 @@ def universe() -> list[str]:
         p = os.path.join(HERE, name)
         if os.path.exists(p):
             out += [ln.strip() for ln in open(p, encoding="utf-8") if ln.strip() and not ln.startswith("#")]
+    out += ds.remote_symbols()
     return sorted(set(out))
 
 
@@ -56,6 +57,15 @@ def entries(df: pd.DataFrame) -> list[dict]:
         if sc == 4:
             last[sd + "4"] = i
     return ev
+
+
+def profile(tk) -> dict:
+    """Branche, Industrie, Land, Name (Yahoo) - fuer Positionen ohne Eintrag in der Ticker-Liste."""
+    try:
+        i = tk.info or {}
+    except Exception:
+        return {}
+    return {k: i.get(src) for k, src in (("sector", "sector"), ("industry", "industry"), ("country", "country"), ("name", "shortName"), ("long_name", "longName"), ("exchange", "exchange"), ("currency", "currency")) if i.get(src)}
 
 
 def record(t: str, df: pd.DataFrame, splits) -> dict | None:
@@ -92,6 +102,7 @@ def main():
             raw = tk.history(period="10y", auto_adjust=False)   # Kurse sind splitbereinigt, Dividenden nicht eingerechnet
             rec = record(t, raw, tk.splits if hasattr(tk, "splits") else None)
             if rec:
+                rec["prof"] = profile(tk)
                 out[t] = rec
             else:
                 bad.append(t)

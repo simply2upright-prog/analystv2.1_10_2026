@@ -68,6 +68,18 @@ def one(t: str) -> tuple[str, dict | None]:
                 ed = ed if isinstance(ed, (list, tuple)) else [ed]
                 rec["ne"] = sorted({x for x in (_d(e) for e in ed) if x})[:2]
             rec["ee"], rec["re"] = _num(cal.get("Earnings Average")), _num(cal.get("Revenue Average"))
+            try:        # Gewinn je Aktie und Dividendenabdeckung
+                inf = tk.info or {}
+                for k, src in (("eps", "trailingEps"), ("epf", "forwardEps"), ("dps", "dividendRate"), ("pay", "payoutRatio"), ("fcf", "freeCashflow"), ("sh", "sharesOutstanding")):
+                    v = _num(inf.get(src))
+                    if v is not None:
+                        rec[k] = v
+                if "dps" not in rec:
+                    v = _num(inf.get("trailingAnnualDividendRate"))
+                    if v:
+                        rec["dps"] = v
+            except Exception:
+                pass
             return t, rec
         except Exception as e:
             log.debug("%s: %s", t, e)

@@ -91,12 +91,13 @@ def main():
     ap.add_argument("--limit", type=int, default=0)
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(message)s")
-    tickers = universe()
+    prio = universe()                       # Positionen, Optionswerte, extra: Einzelabruf mit Splits und Profil
+    broad = [t for t in ds.universe() if t not in set(prio)]   # restlicher Screener: Sammel-Download (schnell), ohne Splits/Profil
     if a.limit:
-        tickers = tickers[:a.limit]
-    log.info("%d Ticker", len(tickers))
+        prio, broad = prio[:a.limit], broad[:a.limit]
+    log.info("%d Ticker einzeln, %d im Sammel-Download", len(prio), len(broad))
     out, bad = {}, []
-    for t in tickers:
+    for t in prio:
         try:
             tk = engine.yf.Ticker(t)
             raw = tk.history(period="10y", auto_adjust=False)   # Kurse sind splitbereinigt, Dividenden nicht eingerechnet
@@ -110,6 +111,23 @@ def main():
             log.warning("%s: %s", t, e)
             bad.append(t)
         time.sleep(0.4)
+    if broad:
+        try:
+            frames, failed = engine.download_price_frames(broad, period="10y")
+        except Exception as e:
+            log.warning("Sammel-Download: %s", e)
+            frames, failed = {}, broad
+        for t, df in frames.items():
+            try:
+                rec = record(t, df, None)
+                if rec:
+                    out[t] = rec
+                else:
+                    bad.append(t)
+            except Exception as e:
+                log.warning("%s: %s", t, e)
+                bad.append(t)
+        bad += [t for t in failed if t not in bad]
     payload = {"updated": datetime.now(timezone.utc).isoformat(timespec="seconds"), "count": len(out), "no_data": bad, "tickers": out}
     with gzip.open(OUT, "wt", encoding="utf-8", compresslevel=9) as f:
         json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))

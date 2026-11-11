@@ -74,6 +74,10 @@ def one(t: str) -> tuple[str, dict | None]:
                     v = _num(inf.get(src))
                     if v is not None:
                         rec[k] = v
+                w = (inf.get("website") or "").strip().lower()
+                if w:
+                    w = w.split("://")[-1].split("/")[0]
+                    rec["web"] = w[4:] if w.startswith("www.") else w
                 if "dps" not in rec:
                     v = _num(inf.get("trailingAnnualDividendRate"))
                     if v:

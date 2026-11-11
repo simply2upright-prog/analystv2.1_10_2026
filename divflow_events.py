@@ -74,6 +74,9 @@ def one(t: str) -> tuple[str, dict | None]:
                     v = _num(inf.get(src))
                     if v is not None:
                         rec[k] = v
+                cc = (inf.get("currency") or "").strip()
+                if cc:
+                    rec["ccy"] = cc
                 w = (inf.get("website") or "").strip().lower()
                 if w:
                     w = w.split("://")[-1].split("/")[0]

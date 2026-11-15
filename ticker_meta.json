@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-08T11:59:57+00:00",
+ "updated": "2026-11-15T12:48:29+00:00",
  "tickers": {
   "000270.KS": {
    "name": "KIA CORP.",
@@ -2212,7 +2212,8 @@
    "exchange": "NYQ",
    "currency": "USD",
    "quote_type": "EQUITY",
-   "country": "United States"
+   "country": "United States",
+   "isin": "THE013010R10"
   },
   "BOE.AX": {
    "name": "BOSS EN FPO [BOE]",
@@ -4846,11 +4847,11 @@
    "country": "United Kingdom"
   },
   "HLT": {
-   "name": "Hilton Worldwide Holdings Inc. Common Stock",
+   "name": "Hilton Worldwide Holdings Inc.",
    "long_name": "Hilton Worldwide Holdings Inc.",
    "sector": "Consumer Cyclical",
    "industry": "Lodging",
-   "exchange": "NYQ",
+   "exchange": "NMS",
    "currency": "USD",
    "quote_type": "EQUITY",
    "country": "United States",
@@ -5163,7 +5164,7 @@
    "currency": "USD",
    "quote_type": "EQUITY",
    "country": "United Kingdom",
-   "isin": "PR82525F1005"
+   "isin": "PRU0560L1025"
   },
   "III.L": {
    "name": "3I GROUP PLC ORD 73 19/22P",
@@ -6047,7 +6048,7 @@
    "currency": "GBp",
    "quote_type": "EQUITY",
    "country": "United Kingdom",
-   "isin": "PLCTHQM00018"
+   "isin": "PLCRTCH00017"
   },
   "LVS": {
    "name": "Las Vegas Sands Corp.",
@@ -7152,7 +7153,8 @@
    "exchange": "PAR",
    "currency": "EUR",
    "quote_type": "EQUITY",
-   "country": "France"
+   "country": "France",
+   "isin": "IT0005733040"
   },
   "ORCL": {
    "name": "Oracle Corporation",
@@ -8488,7 +8490,8 @@
    "exchange": "STO",
    "currency": "SEK",
    "quote_type": "EQUITY",
-   "country": "Sweden"
+   "country": "Sweden",
+   "isin": "CNE000001L23"
   },
   "SIX2.DE": {
    "name": "Sixt SE                       I",
@@ -10003,7 +10006,7 @@
    "currency": "USD",
    "quote_type": "EQUITY",
    "country": "United States",
-   "isin": "CA93267J1012"
+   "isin": "CA93267X1006"
   },
   "WPC": {
    "name": "W. P. Carey Inc. REIT",

@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-15T12:48:29+00:00",
+ "updated": "2026-11-22T13:20:47+00:00",
  "tickers": {
   "000270.KS": {
    "name": "KIA CORP.",
@@ -2051,7 +2051,7 @@
   },
   "BKH": {
    "name": "Black Hills Corporation",
-   "long_name": "Black Hills Corporation",
+   "long_name": "Black Hills Corp",
    "sector": "Utilities",
    "industry": "Utilities - Regulated Gas",
    "exchange": "NYQ",
@@ -4528,7 +4528,7 @@
    "long_name": "General Motors Company",
    "sector": "Consumer Cyclical",
    "industry": "Auto Manufacturers",
-   "exchange": "NYQ",
+   "exchange": "NMS",
    "currency": "USD",
    "quote_type": "EQUITY",
    "country": "United States"
@@ -5171,7 +5171,10 @@
    "long_name": "3i Group Ord",
    "exchange": "LSE",
    "currency": "GBp",
-   "quote_type": "EQUITY"
+   "quote_type": "EQUITY",
+   "sector": "Financial Services",
+   "industry": "Asset Management",
+   "country": "United Kingdom"
   },
   "ILMN": {
    "name": "Illumina, Inc.",
@@ -5434,7 +5437,8 @@
    "exchange": "MCE",
    "currency": "EUR",
    "quote_type": "EQUITY",
-   "country": "Spain"
+   "country": "Spain",
+   "name": "INDUSTRIA DE DISE...O TEXTIL S."
   },
   "IVU.DE": {
    "name": "IVU TRAFFIC TECHNOLOGIES  AG  I",
@@ -5546,7 +5550,8 @@
    "exchange": "GER",
    "currency": "EUR",
    "quote_type": "EQUITY",
-   "country": "Germany"
+   "country": "Germany",
+   "name": "KLOECKNER + CO SE NA O.N."
   },
   "KDP": {
    "name": "Keurig Dr Pepper Inc.",
@@ -6488,7 +6493,10 @@
    "long_name": "Macquarie Group Limited",
    "exchange": "ASX",
    "currency": "AUD",
-   "quote_type": "EQUITY"
+   "quote_type": "EQUITY",
+   "sector": "Financial Services",
+   "industry": "Capital Markets",
+   "country": "Australia"
   },
   "MRK": {
    "name": "Merck & Company, Inc.",
